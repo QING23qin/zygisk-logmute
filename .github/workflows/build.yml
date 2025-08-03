@@ -1,48 +1,97 @@
-name: Build Zygisk LogMute Module
+name: Build Zygisk Logmute Module
 
 on:
+  workflow_dispatch:  # 允许手动触发
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ master ]
 
 jobs:
   build:
-    name: Build shared library
     runs-on: ubuntu-latest
-
-    env:
-      ANDROID_NDK_VERSION: r21e
-      ANDROID_PLATFORM: android-29  # 根据你的需要设置平台版本
-      ANDROID_ABI: arm64-v8a        # 根据实际目标架构调整
-
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git cmake unzip
-
-      - name: Download Android NDK
-        run: |
-          wget -q https://dl.google.com/android/repository/ndk-${ANDROID_NDK_VERSION}-linux-x86_64.zip
-          unzip -q ndk-${ANDROID_NDK_VERSION}-linux-x86_64.zip -d $HOME/android-ndk
-          echo "ANDROID_NDK_HOME=$HOME/android-ndk/android-ndk-${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-
-      - name: Build the project
-        run: |
-          mkdir build && cd build
-          # 配置交叉编译
-          cmake -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-                -DANDROID_ABI=$ANDROID_ABI \
-                -DANDROID_PLATFORM=$ANDROID_PLATFORM \
-                ..　
-          make
-
-      - name: Upload built .so as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: zygisk-logmute-so
-          path: build/lib*.so
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Android NDK
+      uses: android-actions/setup-android@v3
+      with:
+        ndk-version: "26.2.11394342"  # 使用最新的稳定版NDK
+        cmake-version: "3.22.1"
+        
+    - name: Build for arm64-v8a
+      run: |
+        mkdir -p build/arm64-v8a
+        cd build/arm64-v8a
+        cmake ../.. \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-24 \
+          -DCMAKE_BUILD_TYPE=Release
+        make -j4
+        
+    - name: Build for armeabi-v7a
+      run: |
+        mkdir -p build/armeabi-v7a
+        cd build/armeabi-v7a
+        cmake ../.. \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=armeabi-v7a \
+          -DANDROID_PLATFORM=android-24 \
+          -DCMAKE_BUILD_TYPE=Release
+        make -j4
+        
+    - name: Create module structure
+      run: |
+        # 创建模块目录结构
+        mkdir -p artifact/zygisk
+        
+        # 复制不同架构的库文件
+        cp build/arm64-v8a/liblogd.so artifact/zygisk/arm64-v8a.so
+        cp build/armeabi-v7a/liblogd.so artifact/zygisk/armeabi-v7a.so
+        
+        # 复制必要的模块文件
+        cp module.prop artifact/
+        cp README.md artifact/
+        
+        # 创建安装脚本
+        cat > artifact/customize.sh << 'EOF'
+        #!/system/bin/sh
+        
+        SKIPUNZIP=1
+        
+        ui_print "*******************************"
+        ui_print "   Logd Disabler Module        "
+        ui_print "   Version: 1.1.0              "
+        ui_print "   Built: $(date +%Y-%m-%d)    "
+        ui_print "*******************************"
+        
+        # 检查Zygisk支持
+        if [ ! -d "/data/adb/zygisk" ]; then
+          ui_print "! Zygisk not detected"
+          abort "This module requires Zygisk"
+        fi
+        
+        # 安装库文件
+        ui_print "- Installing libraries"
+        mkdir -p "$MODPATH/zygisk"
+        cp -f "$ZIPFILE/zygisk/*.so" "$MODPATH/zygisk/"
+        
+        # 设置权限
+        set_perm_recursive "$MODPATH" 0 0 0755 0644
+        
+        ui_print "- Installation complete!"
+        EOF
+        
+        chmod +x artifact/customize.sh
+        
+    - name: Package module
+      run: |
+        cd artifact
+        zip -r logddisabler.zip *
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: logddisabler-module
+        path: artifact/logddisabler.zip
