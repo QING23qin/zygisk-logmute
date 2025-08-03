@@ -1,45 +1,48 @@
-name: Build Zygisk Module
+name: Build Zygisk LogMute Module
 
 on:
   push:
-    branches: [master]
-  workflow_dispatch:
+    branches:
+      - main
+  pull_request:
 
 jobs:
   build:
+    name: Build shared library
     runs-on: ubuntu-latest
+
     env:
-      NDK_VER: r25c
+      ANDROID_NDK_VERSION: r21e
+      ANDROID_PLATFORM: android-29  # 根据你的需要设置平台版本
+      ANDROID_ABI: arm64-v8a        # 根据实际目标架构调整
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Install dependencies
+      - name: Set up dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip wget
+          sudo apt-get install -y git cmake unzip
 
-      - name: Download Android NDK ${{ env.NDK_VER }}
+      - name: Download Android NDK
         run: |
-          wget https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip
-          unzip -q android-ndk-${NDK_VER}-linux.zip
-          echo "NDK=$PWD/android-ndk-${NDK_VER}" >> $GITHUB_ENV
+          wget -q https://dl.google.com/android/repository/ndk-${ANDROID_NDK_VERSION}-linux-x86_64.zip
+          unzip -q ndk-${ANDROID_NDK_VERSION}-linux-x86_64.zip -d $HOME/android-ndk
+          echo "ANDROID_NDK_HOME=$HOME/android-ndk/android-ndk-${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
 
-      - name: Build libzygisk.so
+      - name: Build the project
         run: |
-          cd src
-          $NDK/ndk-build
-          mkdir -p ../module
-          cp -v libs/arm64-v8a/libzygisk.so ../module/
+          mkdir build && cd build
+          # 配置交叉编译
+          cmake -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+                -DANDROID_ABI=$ANDROID_ABI \
+                -DANDROID_PLATFORM=$ANDROID_PLATFORM \
+                ..　
+          make
 
-      - name: Package Magisk Module
-        run: |
-          cd module
-          zip -r ../zygisk-logmute.zip ./*
-
-      - name: Upload built module
-        uses: actions/upload-artifact@v4
+      - name: Upload built .so as artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: zygisk-logmute
-          path: zygisk-logmute.zip
+          name: zygisk-logmute-so
+          path: build/lib*.so
