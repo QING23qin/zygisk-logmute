@@ -35,7 +35,7 @@ jobs:
           zip -r ../zygisk-logmute-built.zip ./*
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@V4
         with:
           name: Zygisk Module
           path: zygisk-logmute-built.zip
